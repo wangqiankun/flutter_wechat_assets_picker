@@ -10,6 +10,8 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart' as intl;
+
 import 'package:photo_manager/photo_manager.dart';
 import 'package:photo_manager_image_provider/photo_manager_image_provider.dart';
 import 'package:provider/provider.dart';
@@ -208,6 +210,15 @@ abstract class AssetPickerBuilderDelegate<Asset, Path> {
     initialPermission,
   );
 
+  late double itemHeight;
+  List<AssetEntity> cacheCurrentAssets = [];
+
+  final ValueNotifier<String> firstItemDate = ValueNotifier<String>('');
+  final ValueNotifier<bool> scrollbarThumbVisibility =
+      ValueNotifier<bool>(false);
+
+  Timer? _timer; // 定义一个 Timer 用于延迟执行
+
   late final permissionOverlayDisplay = ValueNotifier<bool>(
     limitedPermissionOverlayPredicate?.call(permissionNotifier.value) ??
         (permissionNotifier.value == PermissionState.limited),
@@ -240,6 +251,7 @@ abstract class AssetPickerBuilderDelegate<Asset, Path> {
     isSwitchingPath.dispose();
     permissionNotifier.dispose();
     permissionOverlayDisplay.dispose();
+    _timer?.cancel();
   }
 
   /// The method to select assets. Delegates can implement this method
@@ -761,9 +773,9 @@ class DefaultAssetPickerBuilderDelegate
     this.shouldAutoplayPreview = false,
   }) {
     // Add the listener if [keepScrollOffset] is true.
-    if (keepScrollOffset) {
-      gridScrollController.addListener(keepScrollOffsetListener);
-    }
+    // if (keepScrollOffset) {
+    gridScrollController.addListener(keepScrollOffsetListener);
+    // }
   }
 
   /// [ChangeNotifier] for asset picker.
@@ -845,7 +857,25 @@ class DefaultAssetPickerBuilderDelegate
   /// 当 [keepScrollOffset] 为 true 时，跟踪 [gridScrollController] 位置的监听。
   void keepScrollOffsetListener() {
     if (gridScrollController.hasClients) {
-      Singleton.scrollPosition = gridScrollController.position;
+      if (keepScrollOffset) {
+        Singleton.scrollPosition = gridScrollController.position;
+      }
+      // 获取滚动偏移量
+      final double scrollOffset = gridScrollController.offset;
+      // 计算当前滚动的第一个完全可见的 index
+      final int firstVisibleRowIndex = (scrollOffset / itemHeight).floor();
+      final int firstVisibleItemIndex =
+          (firstVisibleRowIndex * gridCount).toInt();
+
+      if (cacheCurrentAssets.length > firstVisibleItemIndex) {
+        AssetEntity firstVisibleAsset =
+            cacheCurrentAssets[firstVisibleItemIndex];
+        String formattedDateTime = intl.DateFormat('yyyy年MM月dd日')
+            .format(firstVisibleAsset.createDateTime);
+        // debugPrint("jxxxxxx firstVisibleItemIndex=${formattedDateTime}");
+        firstItemDate.value = formattedDateTime;
+        onTimerDebounce();
+      }
     }
   }
 
@@ -1111,6 +1141,7 @@ class DefaultAssetPickerBuilderDelegate
 
   @override
   Widget androidLayout(BuildContext context) {
+    // debugPrint("jxxxxxxx1 androidLayout init");
     return AssetPickerAppBarWrapper(
       appBar: appBar(context),
       body: Consumer<DefaultAssetPickerProvider>(
@@ -1132,6 +1163,25 @@ class DefaultAssetPickerBuilderDelegate
                       ),
                       pathEntityListBackdrop(context),
                       pathEntityListWidget(context),
+                      Positioned(
+                        top: 0,
+                        child: ValueListenableBuilder<String>(
+                          valueListenable: firstItemDate,
+                          builder: (context, value, child) {
+                            return IgnorePointer(
+                              child: SizedBox(
+                                width: double.infinity,
+                                child: Text(
+                                  textAlign: TextAlign.center,
+                                  value,
+                                  style: const TextStyle(
+                                      fontSize: 18, color: Colors.white),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
                     ],
                   )
                 : loadingIndicator(context),
@@ -1153,6 +1203,12 @@ class DefaultAssetPickerBuilderDelegate
               children: <Widget>[
                 Positioned.fill(child: assetsGridBuilder(context)),
                 Positioned.fill(top: null, child: bottomActionBar(context)),
+                Positioned(
+                    top: 0,
+                    child: Text(
+                      "XXXX年XX月XX日",
+                      style: TextStyle(fontSize: 136, color: Colors.white),
+                    )),
               ],
             ),
           ),
@@ -1267,6 +1323,16 @@ class DefaultAssetPickerBuilderDelegate
         // [gridCount] since every grid item is squeezed by the [itemSpacing],
         // and it's actual size is reduced with [itemSpacing / gridCount].
         final double dividedSpacing = itemSpacing / gridCount;
+        itemHeight =
+            (MediaQuery.sizeOf(context).width - 3 * itemSpacing) / gridCount;
+
+        // debugPrint(
+        //   'jxxxxxx [AssetPicker] - '
+        //   'Grid item height: $itemHeight, '
+        //   'Spacing: $dividedSpacing, '
+        //   'Row: $row, '
+        //   'Placeholder: $placeholderCount.',
+        // );
         final double topPadding =
             context.topPadding + appBarPreferredSize!.height;
 
@@ -1359,26 +1425,52 @@ class DefaultAssetPickerBuilderDelegate
                       context.bottomPadding + bottomSectionHeight,
                     );
                     appBarPreferredSize ??= appBar(context).preferredSize;
-                    return CustomScrollView(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      controller: gridScrollController,
-                      anchor: gridRevert ? anchor : 0,
-                      center: gridRevert ? gridRevertKey : null,
-                      slivers: <Widget>[
-                        if (isAppleOS(context))
-                          SliverGap.v(
-                            context.topPadding + appBarPreferredSize!.height,
+                    return ValueListenableBuilder<bool>(
+                      valueListenable: scrollbarThumbVisibility,
+                      builder:
+                          (BuildContext context, bool value, Widget? child) {
+                        return ScrollbarTheme(
+                          data: ScrollbarThemeData(
+                            thumbColor: MaterialStateProperty.all(Colors.white),
                           ),
-                        sliverGrid(context, assets),
-                        // Ignore the gap when the [anchor] is not equal to 1.
-                        if (gridRevert && anchor == 1) bottomGap,
-                        if (gridRevert)
-                          SliverToBoxAdapter(
-                            key: gridRevertKey,
-                            child: const SizedBox.shrink(),
+                          child: Scrollbar(
+                            controller: gridScrollController,
+                            // 关联滚动条与 CustomScrollView
+                            trackVisibility: false,
+                            // 在滚动时显示轨道
+                            thumbVisibility: scrollbarThumbVisibility.value,
+                            // 在滚动时显示滚动条
+                            thickness: 20.0,
+                            interactive: true,
+                            // 设置滑块宽度
+                            radius: Radius.circular(5.0),
+                            // 设置滑块的圆角
+                            child: CustomScrollView(
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              controller: gridScrollController,
+                              anchor: gridRevert ? anchor : 0,
+                              center: gridRevert ? gridRevertKey : null,
+                              slivers: <Widget>[
+                                if (isAppleOS(context))
+                                  SliverGap.v(
+                                    context.topPadding +
+                                        appBarPreferredSize!.height,
+                                  ),
+                                sliverGrid(context, assets),
+                                // Ignore the gap when the [anchor] is not equal to 1.
+                                if (gridRevert && anchor == 1) bottomGap,
+                                if (gridRevert)
+                                  SliverToBoxAdapter(
+                                    key: gridRevertKey,
+                                    child: const SizedBox.shrink(),
+                                  ),
+                                if (isAppleOS(context) && !gridRevert)
+                                  bottomGap,
+                              ],
+                            ),
                           ),
-                        if (isAppleOS(context) && !gridRevert) bottomGap,
-                      ],
+                        );
+                      },
                     );
                   },
                 ),
@@ -1410,11 +1502,14 @@ class DefaultAssetPickerBuilderDelegate
     List<AssetEntity> currentAssets, {
     Widget? specialItem,
   }) {
+    // debugPrint(
+    //     "jxxxxxxx index=$index currentAssets count=${currentAssets.length}");
     final DefaultAssetPickerProvider p =
         context.read<DefaultAssetPickerProvider>();
     final int length = currentAssets.length;
     final PathWrapper<AssetPathEntity>? currentWrapper = p.currentPath;
     final AssetPathEntity? currentPathEntity = currentWrapper?.path;
+    cacheCurrentAssets = currentAssets;
 
     if (specialItem != null) {
       if ((index == 0 && specialItemPosition == SpecialItemPosition.prepend) ||
@@ -2425,6 +2520,7 @@ class DefaultAssetPickerBuilderDelegate
 
   @override
   Widget build(BuildContext context) {
+// todo
     // Schedule the scroll position's restoration callback if this feature
     // is enabled and offsets are different.
     if (keepScrollOffset && Singleton.scrollPosition != null) {
@@ -2457,5 +2553,18 @@ class DefaultAssetPickerBuilderDelegate
         ),
       ),
     );
+  }
+
+  // 延迟 2 秒更新数据
+  void onTimerDebounce() {
+    if (_timer?.isActive ?? false) {
+      _timer!.cancel(); // 如果有新输入，取消之前的延迟任务
+    }
+
+    // 启动一个新的 Timer，延迟 1 秒后执行任务
+    _timer = Timer(const Duration(milliseconds: 1000), () {
+      firstItemDate.value = '';
+      scrollbarThumbVisibility.value = false;
+    });
   }
 }
