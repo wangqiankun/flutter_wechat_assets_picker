@@ -6,12 +6,12 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart' as intl;
-
 import 'package:photo_manager/photo_manager.dart';
 import 'package:photo_manager_image_provider/photo_manager_image_provider.dart';
 import 'package:provider/provider.dart';
@@ -28,6 +28,7 @@ import '../widget/asset_picker.dart';
 import '../widget/asset_picker_app_bar.dart';
 import '../widget/asset_picker_viewer.dart';
 import '../widget/builder/asset_entity_grid_item_builder.dart';
+import 'custom_ios_scrollbar.dart';
 
 /// The delegate to build the whole picker's components.
 ///
@@ -229,6 +230,7 @@ abstract class AssetPickerBuilderDelegate<Asset, Path> {
   bool get isPermissionLimited =>
       permissionNotifier.value == PermissionState.limited;
 
+  // 会影响 scrollbar 的拖动
   bool effectiveShouldRevertGrid(BuildContext context) =>
       shouldRevertGrid ?? isAppleOS(context);
 
@@ -525,14 +527,15 @@ abstract class AssetPickerBuilderDelegate<Asset, Path> {
   ///
   /// By default, the direction will be reversed if it's iOS/macOS.
   /// 默认情况下，在 iOS/macOS 上方向会反向。
+  /// 因为要加滚动指示器，所以不用反方向 ~by wqk 2024-09-25
   TextDirection effectiveGridDirection(BuildContext context) {
     final TextDirection od = Directionality.of(context);
-    if (effectiveShouldRevertGrid(context)) {
-      if (od == TextDirection.ltr) {
-        return TextDirection.rtl;
-      }
-      return TextDirection.ltr;
-    }
+    // if (effectiveShouldRevertGrid(context)) {
+    //   if (od == TextDirection.ltr) {
+    //     return TextDirection.rtl;
+    //   }
+    //   return TextDirection.ltr;
+    // }
     return od;
   }
 
@@ -866,14 +869,22 @@ class DefaultAssetPickerBuilderDelegate
       final int firstVisibleRowIndex = (scrollOffset / itemHeight).floor();
       final int firstVisibleItemIndex =
           (firstVisibleRowIndex * gridCount).toInt();
-
-      if (cacheCurrentAssets.length > firstVisibleItemIndex) {
-        AssetEntity firstVisibleAsset =
-            cacheCurrentAssets[firstVisibleItemIndex];
-        String formattedDateTime = intl.DateFormat('yyyy年MM月dd日')
+      //获取绝对值
+      final int fixFirstVisibleItemIndex;
+      if (defaultTargetPlatform == TargetPlatform.iOS ||
+          defaultTargetPlatform == TargetPlatform.macOS) {
+        // 运行在 iOS 上
+        fixFirstVisibleItemIndex = firstVisibleItemIndex.abs();
+      } else {
+        fixFirstVisibleItemIndex = firstVisibleItemIndex;
+      }
+      if (cacheCurrentAssets.length > fixFirstVisibleItemIndex) {
+        final AssetEntity firstVisibleAsset =
+            cacheCurrentAssets[fixFirstVisibleItemIndex];
+        final String formattedDateTime = intl.DateFormat('yyyy年MM月dd日')
             .format(firstVisibleAsset.createDateTime);
-        // debugPrint("jxxxxxx firstVisibleItemIndex=${formattedDateTime}");
         firstItemDate.value = formattedDateTime;
+        scrollbarThumbVisibility.value = true;
         onTimerDebounce();
       }
     }
@@ -1165,12 +1176,13 @@ class DefaultAssetPickerBuilderDelegate
                       pathEntityListWidget(context),
                       Positioned(
                         top: 0,
+                        left: 0,
+                        right: 0,
                         child: ValueListenableBuilder<String>(
                           valueListenable: firstItemDate,
                           builder: (context, value, child) {
                             return IgnorePointer(
                               child: SizedBox(
-                                width: double.infinity,
                                 child: Text(
                                   textAlign: TextAlign.center,
                                   value,
@@ -1204,11 +1216,26 @@ class DefaultAssetPickerBuilderDelegate
                 Positioned.fill(child: assetsGridBuilder(context)),
                 Positioned.fill(top: null, child: bottomActionBar(context)),
                 Positioned(
-                    top: 0,
-                    child: Text(
-                      "XXXX年XX月XX日",
-                      style: TextStyle(fontSize: 136, color: Colors.white),
-                    )),
+                  top: context.topPadding + appBarPreferredSize!.height,
+                  left: 0,
+                  right: 0,
+                  child: IgnorePointer(
+                    child: ValueListenableBuilder<String>(
+                      valueListenable: firstItemDate,
+                      builder: (context, value, child) {
+                        return SizedBox(
+                          width: double.infinity,
+                          child: Text(
+                            textAlign: TextAlign.center,
+                            value,
+                            style: const TextStyle(
+                                fontSize: 18, color: Colors.white),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -1336,6 +1363,42 @@ class DefaultAssetPickerBuilderDelegate
         final double topPadding =
             context.topPadding + appBarPreferredSize!.height;
 
+        Widget wrapScrollBar(
+            BuildContext context, bool visibleValue, Widget child) {
+          debugPrint('jxxxxxx [visibleValue] - '
+              'visibleValue: $visibleValue, '
+              'scrollbarThumbVisibility: ${scrollbarThumbVisibility.value}, ');
+
+          if (isAppleOS(context)) {
+            return CustomIOSScrollbar(
+                // // 关联滚动条与 CustomScrollView
+                controller: gridScrollController,
+                // 在滚动时显示轨道
+                thumbVisibility: visibleValue,
+                scrollbarOutsetPadding: EdgeInsets.only(
+                    top: context.topPadding + appBarPreferredSize!.height,
+                    bottom: bottomSectionHeight + context.bottomPadding),
+                child: child);
+          } else {
+            return ScrollbarTheme(
+                data: ScrollbarThemeData(
+                  thumbColor: MaterialStateProperty.all(Colors.white),
+                ),
+                child: Scrollbar(
+                    controller: gridScrollController,
+                    // 关联滚动条与 CustomScrollView
+                    trackVisibility: false,
+                    // 在滚动时显示轨道
+                    thumbVisibility: true,
+                    // 在滚动时显示滚动条
+                    thickness: 20.0,
+                    interactive: true,
+                    // 设置滑块宽度
+                    radius: const Radius.circular(5.0),
+                    child: child));
+          }
+        }
+
         Widget sliverGrid(BuildContext context, List<AssetEntity> assets) {
           return SliverGrid(
             delegate: SliverChildBuilderDelegate(
@@ -1429,45 +1492,30 @@ class DefaultAssetPickerBuilderDelegate
                       valueListenable: scrollbarThumbVisibility,
                       builder:
                           (BuildContext context, bool value, Widget? child) {
-                        return ScrollbarTheme(
-                          data: ScrollbarThemeData(
-                            thumbColor: MaterialStateProperty.all(Colors.white),
-                          ),
-                          child: Scrollbar(
+                        return wrapScrollBar(
+                          context,
+                          value,
+                          CustomScrollView(
+                            physics: const AlwaysScrollableScrollPhysics(),
                             controller: gridScrollController,
-                            // 关联滚动条与 CustomScrollView
-                            trackVisibility: false,
-                            // 在滚动时显示轨道
-                            thumbVisibility: scrollbarThumbVisibility.value,
-                            // 在滚动时显示滚动条
-                            thickness: 20.0,
-                            interactive: true,
-                            // 设置滑块宽度
-                            radius: Radius.circular(5.0),
-                            // 设置滑块的圆角
-                            child: CustomScrollView(
-                              physics: const AlwaysScrollableScrollPhysics(),
-                              controller: gridScrollController,
-                              anchor: gridRevert ? anchor : 0,
-                              center: gridRevert ? gridRevertKey : null,
-                              slivers: <Widget>[
-                                if (isAppleOS(context))
-                                  SliverGap.v(
-                                    context.topPadding +
-                                        appBarPreferredSize!.height,
-                                  ),
-                                sliverGrid(context, assets),
-                                // Ignore the gap when the [anchor] is not equal to 1.
-                                if (gridRevert && anchor == 1) bottomGap,
-                                if (gridRevert)
-                                  SliverToBoxAdapter(
-                                    key: gridRevertKey,
-                                    child: const SizedBox.shrink(),
-                                  ),
-                                if (isAppleOS(context) && !gridRevert)
-                                  bottomGap,
-                              ],
-                            ),
+                            anchor: gridRevert ? anchor : 0,
+                            center: gridRevert ? gridRevertKey : null,
+                            slivers: <Widget>[
+                              if (isAppleOS(context))
+                                SliverGap.v(
+                                  context.topPadding +
+                                      appBarPreferredSize!.height,
+                                ),
+                              sliverGrid(context, assets),
+                              // Ignore the gap when the [anchor] is not equal to 1.
+                              if (gridRevert && anchor == 1) bottomGap,
+                              if (gridRevert)
+                                SliverToBoxAdapter(
+                                  key: gridRevertKey,
+                                  child: const SizedBox.shrink(),
+                                ),
+                              if (isAppleOS(context) && !gridRevert) bottomGap,
+                            ],
                           ),
                         );
                       },
@@ -2520,7 +2568,6 @@ class DefaultAssetPickerBuilderDelegate
 
   @override
   Widget build(BuildContext context) {
-// todo
     // Schedule the scroll position's restoration callback if this feature
     // is enabled and offsets are different.
     if (keepScrollOffset && Singleton.scrollPosition != null) {
@@ -2562,7 +2609,7 @@ class DefaultAssetPickerBuilderDelegate
     }
 
     // 启动一个新的 Timer，延迟 1 秒后执行任务
-    _timer = Timer(const Duration(milliseconds: 1000), () {
+    _timer = Timer(const Duration(milliseconds: 500), () {
       firstItemDate.value = '';
       scrollbarThumbVisibility.value = false;
     });
