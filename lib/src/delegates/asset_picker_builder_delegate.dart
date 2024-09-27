@@ -528,14 +528,15 @@ abstract class AssetPickerBuilderDelegate<Asset, Path> {
   /// By default, the direction will be reversed if it's iOS/macOS.
   /// 默认情况下，在 iOS/macOS 上方向会反向。
   /// 因为要加滚动指示器，所以不用反方向 ~by wqk 2024-09-25
+  /// 2024-09-27 自定了iOS，改回来～
   TextDirection effectiveGridDirection(BuildContext context) {
     final TextDirection od = Directionality.of(context);
-    // if (effectiveShouldRevertGrid(context)) {
-    //   if (od == TextDirection.ltr) {
-    //     return TextDirection.rtl;
-    //   }
-    //   return TextDirection.ltr;
-    // }
+    if (effectiveShouldRevertGrid(context)) {
+      if (od == TextDirection.ltr) {
+        return TextDirection.rtl;
+      }
+      return TextDirection.ltr;
+    }
     return od;
   }
 
@@ -1389,7 +1390,7 @@ class DefaultAssetPickerBuilderDelegate
                     // 关联滚动条与 CustomScrollView
                     trackVisibility: false,
                     // 在滚动时显示轨道
-                    thumbVisibility: true,
+                    thumbVisibility: false,
                     // 在滚动时显示滚动条
                     thickness: 20.0,
                     interactive: true,
@@ -1400,52 +1401,55 @@ class DefaultAssetPickerBuilderDelegate
         }
 
         Widget sliverGrid(BuildContext context, List<AssetEntity> assets) {
-          return SliverGrid(
-            delegate: SliverChildBuilderDelegate(
-              (_, int index) => Builder(
-                builder: (BuildContext context) {
-                  if (gridRevert) {
-                    if (index < placeholderCount) {
-                      return const SizedBox.shrink();
+          return Directionality(
+            textDirection: TextDirection.ltr,
+            child: SliverGrid(
+              delegate: SliverChildBuilderDelegate(
+                (_, int index) => Builder(
+                  builder: (BuildContext context) {
+                    if (gridRevert) {
+                      if (index < placeholderCount) {
+                        return const SizedBox.shrink();
+                      }
+                      index -= placeholderCount;
                     }
-                    index -= placeholderCount;
-                  }
-                  return MergeSemantics(
-                    child: Directionality(
-                      textDirection: Directionality.of(context),
-                      child: assetGridItemBuilder(
-                        context,
-                        index,
-                        assets,
-                        specialItem: specialItem,
+                    return MergeSemantics(
+                      child: Directionality(
+                        textDirection: Directionality.of(context),
+                        child: assetGridItemBuilder(
+                          context,
+                          index,
+                          assets,
+                          specialItem: specialItem,
+                        ),
                       ),
-                    ),
-                  );
+                    );
+                  },
+                ),
+                childCount: assetsGridItemCount(
+                  context: context,
+                  assets: assets,
+                  placeholderCount: placeholderCount,
+                  specialItem: specialItem,
+                ),
+                findChildIndexCallback: (Key? key) {
+                  if (key is ValueKey<String>) {
+                    return findChildIndexBuilder(
+                      id: key.value,
+                      assets: assets,
+                      placeholderCount: placeholderCount,
+                    );
+                  }
+                  return null;
                 },
+                // Explicitly disable semantic indexes for custom usage.
+                addSemanticIndexes: false,
               ),
-              childCount: assetsGridItemCount(
-                context: context,
-                assets: assets,
-                placeholderCount: placeholderCount,
-                specialItem: specialItem,
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: gridCount,
+                mainAxisSpacing: itemSpacing,
+                crossAxisSpacing: itemSpacing,
               ),
-              findChildIndexCallback: (Key? key) {
-                if (key is ValueKey<String>) {
-                  return findChildIndexBuilder(
-                    id: key.value,
-                    assets: assets,
-                    placeholderCount: placeholderCount,
-                  );
-                }
-                return null;
-              },
-              // Explicitly disable semantic indexes for custom usage.
-              addSemanticIndexes: false,
-            ),
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: gridCount,
-              mainAxisSpacing: itemSpacing,
-              crossAxisSpacing: itemSpacing,
             ),
           );
         }

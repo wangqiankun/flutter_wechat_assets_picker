@@ -70,6 +70,9 @@ class _CustomIOSScrollbarState extends State<CustomIOSScrollbar> {
       // 计算规则：可见区域高度 / (滚动视图高度 + 可见区域高度) * 可见区域高度
       _thumbHeight =
           viewportHeight / (scrollMax + viewportHeight) * viewportHeight;
+      if (_thumbHeight < 32) {
+        _thumbHeight = 32;
+      }
       // Calculate thumb position as a proportion of scroll offset
 
       //计算规则：滚动距离 / 滚动视图高度 * 可见区域高度
@@ -169,7 +172,7 @@ class _CustomIOSScrollbarState extends State<CustomIOSScrollbar> {
               onVerticalDragUpdate: _onVerticalDragUpdate,
               onVerticalDragEnd: _onVerticalDragEnd,
               child: Container(
-                width: 12.0,
+                width: 18.0,
                 height: _thumbHeight,
                 decoration: BoxDecoration(
                   color: Colors.white,
