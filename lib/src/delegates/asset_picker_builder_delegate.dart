@@ -1366,10 +1366,6 @@ class DefaultAssetPickerBuilderDelegate
 
         Widget wrapScrollBar(
             BuildContext context, bool visibleValue, Widget child) {
-          debugPrint('jxxxxxx [visibleValue] - '
-              'visibleValue: $visibleValue, '
-              'scrollbarThumbVisibility: ${scrollbarThumbVisibility.value}, ');
-
           if (isAppleOS(context)) {
             return CustomIOSScrollbar(
                 // // 关联滚动条与 CustomScrollView
